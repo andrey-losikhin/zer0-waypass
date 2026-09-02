@@ -1,0 +1,29 @@
+id = "zer0/waypass"
+name = "zer0-waypass"
+version = "0.1.0"
+plugin_api = 24
+author = "zer0"
+license = "MIT"
+dependencies = ["zer0-waypass-helper"]
+tags = ["launcher", "privacy", "productivity", "utility"]
+icon = "key-round"
+description = "Search gopass entries and copy selected fields through the system clipboard."
+
+[[launcher_provider]]
+id = "finder"
+entry = "launcher.luau"
+prefix = "wp"
+glyph = "key-round"
+include_in_global_search = false
+debounce_ms = 200
+
+[[panel]]
+id = "waypass"
+entry = "panel.luau"
+width = 520
+height = 520
+placement = "floating"
+position = "center"
+dismiss_on_outside_click = true
+keyboard_focus = "exclusive"
+capture_keys = ["Up", "Down", "Return", "Enter", "Escape", "Backspace", "1", "2", "3", "4", "5", "6", "7", "8", "9"]

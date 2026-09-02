@@ -1,0 +1,27 @@
+pkgname=zer0-waypass
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Wayland password launcher helper and Noctalia plugin'
+arch=('x86_64')
+url='https://example.invalid/zer0-waypass'
+license=('MIT')
+depends=('gopass' 'gnupg' 'wl-clipboard')
+optdepends=('noctalia: Noctalia launcher and panel integration')
+makedepends=('go')
+source=("${pkgname}-${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  GOTOOLCHAIN=local GOCACHE=/tmp/zer0-waypass-package-go-cache GOTMPDIR=/tmp \
+    CGO_ENABLED=0 GOFLAGS=-buildvcs=false \
+    go build -trimpath -o zer0-waypass-helper ./cmd/zer0-waypass-helper
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  install -Dm755 zer0-waypass-helper "${pkgdir}/usr/bin/zer0-waypass-helper"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -d "${pkgdir}/usr/share/noctalia/plugins/zer0-waypass"
+  cp -R --no-preserve=ownership noctalia-plugin/waypass/. "${pkgdir}/usr/share/noctalia/plugins/zer0-waypass/"
+}
