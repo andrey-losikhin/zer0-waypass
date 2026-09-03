@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible defect without including secrets.
+title: "bug: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Never include passwords, decrypted fields, GPG private material, or a real
+        password-store fixture. Report vulnerabilities through Security Advisories.
+  - type: checkboxes
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report contains no secrets or real password-store data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: textarea
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Minimal steps using synthetic data only.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: zer0-waypass version or commit
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment
+      description: Noctalia, gopass, GnuPG, wl-clipboard, Go, compositor and distribution versions.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Redacted logs
+      description: Optional. Remove paths, entry names, usernames, URLs, secrets and key material.
+      render: text

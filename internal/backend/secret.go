@@ -9,7 +9,7 @@ import (
 	"sync"
 	"syscall"
 
-	"zer0-waypass/internal/protocol"
+	"github.com/andrey-losikhin/zer0-waypass/internal/protocol"
 )
 
 // SecretAction is the closed allowlist of values that may be extracted from a

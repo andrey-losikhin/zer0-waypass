@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.go text diff=golang
+*.luau text
+*.sh text eol=lf
+*.webp binary
+LICENSE text

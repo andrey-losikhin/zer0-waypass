@@ -1,3 +1,3 @@
-module zer0-waypass
+module github.com/andrey-losikhin/zer0-waypass
 
 go 1.26

@@ -1,1 +1,16 @@
+# Local builds and package outputs.
+/zer0-waypass-helper
+/.local-package/
+/*.test
+
+# Local Noctalia/Luau development definitions.
+/noctalia.d.luau
+
+# Editor and OS files.
+.DS_Store
+*.swp
+*.swo
+.idea/
+
+# Historical local package experiment (not part of this project).
 /gopass-ui-bin/

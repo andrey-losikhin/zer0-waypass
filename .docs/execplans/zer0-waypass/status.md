@@ -3,6 +3,18 @@
 ## Текущее состояние
 
 - Статус: in progress
+- Сессия 2026-09-03: начат отдельный repository-hygiene проход без изменения
+  runtime: GitHub community profile, contribution/security/release policy, CI,
+  единые license/repository metadata и документация подготовки будущего
+  Noctalia community PR. Commit/push и публикация не входят в этот проход.
+- Сессия 2026-09-03: repository-hygiene проход завершён — GREEN. Добавлены
+  GitHub templates/CI/Dependabot/CODEOWNERS, contribution/security/support/
+  release policies, changelog и text-file conventions; module/repository/license
+  metadata согласованы с публичным GitHub repository и Apache-2.0 `LICENSE`.
+  `git diff --check`, gofmt, shell/YAML parse, test, race, vet и static build —
+  PASS. Skeptic review исправил shallow-checkout CI, недоступный private report
+  channel и преждевременные release links; повторная проверка — GREEN.
+  Independent correctness review — GREEN, подтверждённых проблем не найдено.
 - Сессия 2026-08-31: начато проектирование Waypass Field Contract v1 по решению
   владельца. Контракт должен поддержать только manifest-declared поля, отдельные
   encrypted value entries и целостное копирование multiline values без parsing

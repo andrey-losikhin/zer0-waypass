@@ -13,7 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"zer0-waypass/internal/protocol"
+	"github.com/andrey-losikhin/zer0-waypass/internal/protocol"
 )
 
 const (

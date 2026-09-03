@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"zer0-waypass/internal/backend"
+	"github.com/andrey-losikhin/zer0-waypass/internal/backend"
 )
 
 func TestCopyStreamsDirectlyWithExactArgvAndFreshMembership(t *testing.T) {

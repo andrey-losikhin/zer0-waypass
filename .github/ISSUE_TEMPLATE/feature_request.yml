@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose a scoped improvement compatible with the security model.
+title: "feat: "
+labels: [enhancement, triage]
+body:
+  - type: checkboxes
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and project documentation.
+          required: true
+        - label: The proposal does not require secrets in Noctalia state, settings, cache or logs.
+          required: true
+  - type: textarea
+    attributes:
+      label: Problem
+      description: Describe the user problem, not only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed outcome
+      description: What should users be able to do?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Security and compatibility impact
+      description: Note new commands, files, network access, decrypted data paths or supported environments.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives
+      description: Other approaches considered.

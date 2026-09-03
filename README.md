@@ -1,85 +1,131 @@
 # zer0-waypass
 
-`zer0-waypass` — проект системного менеджера паролей для Wayland и Noctalia.
+[![CI](https://github.com/andrey-losikhin/zer0-waypass/actions/workflows/ci.yml/badge.svg)](https://github.com/andrey-losikhin/zer0-waypass/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/andrey-losikhin/zer0-waypass)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
 
-Главная идея: пользователь вызывает поиск паролей глобальной горячей клавишей,
-выбирает учётную запись и вручную вставляет логин или пароль в любое приложение.
-Проект не привязан к конкретному браузеру и не требует браузерных расширений.
+System-wide password launcher for Wayland and Noctalia, backed by `gopass` and
+GPG. Search once, copy a selected field to the sensitive Wayland clipboard and
+paste it manually into any browser, terminal or desktop application.
 
-## Цель
+> [!IMPORTANT]
+> This project is pre-release. Its helper, plugin protocol and installation
+> layout may change before the first stable release.
 
-- единый интерфейс для Firefox-, Chromium- и других приложений;
-- локальное зашифрованное хранилище на базе `gopass` и GPG;
-- настраиваемое кэширование passphrase штатным `gpg-agent`;
-- копирование секрета в Wayland clipboard с пометкой `sensitive`;
-- ограничение времени выдачи секрета текущим clipboard owner;
-- отсутствие паролей в Noctalia state, настройках и логах;
-- отсутствие паролей в истории clipboard в документированной и проверенной конфигурации;
-- публикация интерфейса как community-плагина Noctalia.
+## Why
 
-## Предлагаемая схема
+Browser-specific password extensions become cumbersome when several browsers
+and desktop applications are used. zer0-waypass provides one system launcher
+without browser integration, URL inspection, automatic typing or form submit.
 
 ```text
-Noctalia launcher/panel
-        |
-        | entry id + action, без секрета
-        v
+Noctalia launcher / panel
+          |
+          | opaque entry and field IDs only
+          v
 zer0-waypass-helper
-        |
-        v
+          |
+          v
 gopass -> GPG -> gpg-agent
-        |
-        v
+          |
+          | direct pipe; no secret in argv or Noctalia state
+          v
 wl-copy --sensitive --foreground
-        |
-        v
-ручная вставка Ctrl+V в любое приложение
 ```
 
-## Почему не собственная криптография
+## Features
 
-Проект создаёт пользовательский интерфейс, безопасный helper и интеграцию с
-Wayland. Формат хранилища и криптографию он делегирует существующим инструментам
-`gopass`, GPG и `gpg-agent`. Самописное шифрование не входит в scope.
+- `/wp` Noctalia launcher search and a keyboard-first panel.
+- `gopass` with GPG/GPG-agent as the only password-store backend.
+- Direct helper-to-`wl-copy` secret stream with a bounded operation deadline.
+- Password, token and key values stay out of Noctalia state, settings and logs.
+- Fixed-argv process execution without shell interpolation.
+- Static, cgo-free Linux helper written with the Go standard library.
 
-## Минимальные зависимости
+## Requirements
 
-- `gopass` — единственный поддерживаемый password-store backend;
-- `gpg`/`gpg-agent` — шифрование и разблокировка;
-- `wl-copy` — sensitive Wayland clipboard.
+- Linux with Wayland;
+- Noctalia with Plugin API 24 or newer;
+- `zer0-waypass-helper` on `PATH`;
+- `gopass`, GnuPG/GPG-agent and `wl-copy` (`wl-clipboard`);
+- Go 1.26+ to build from source.
 
-`pass`, age и `cliphist` не являются зависимостями проекта. Если у пользователя
-уже запущен `cliphist` или другой clipboard manager, его нужно отдельно настроить
-на игнорирование sensitive clipboard.
+The packaged MVP target is Arch Linux and compatible distributions. Other
+Linux systems can use the documented source build, but do not have a maintained
+native package yet.
 
-Пометка `sensitive` является подсказкой, а не универсальной гарантией. Проект
-гарантирует отсутствие секрета в истории только для явно протестированных
-конфигураций, перечисленных в документации.
+## Install from source
 
-## Стек реализации
+```sh
+git clone https://github.com/andrey-losikhin/zer0-waypass.git
+cd zer0-waypass
+GOTOOLCHAIN=local CGO_ENABLED=0 go build -trimpath \
+  -o /tmp/zer0-waypass-helper ./cmd/zer0-waypass-helper
+install -Dm755 /tmp/zer0-waypass-helper "$HOME/.local/bin/zer0-waypass-helper"
+mkdir -p "$HOME/.local/share/noctalia/plugins/zer0-waypass"
+cp -R noctalia-plugin/waypass/. \
+  "$HOME/.local/share/noctalia/plugins/zer0-waypass/"
+```
 
-- helper: Go, Linux-only, стандартная библиотека, `CGO_ENABLED=0`;
-- UI: Luau и Noctalia Plugin API 24+;
-- runtime: `gopass`, GPG/GPG-agent и `wl-copy`;
-- первый пакет: Arch Linux `PKGBUILD`.
+Ensure `$HOME/.local/bin` is on `PATH`, then enable the plugin in Noctalia.
+Detailed requirements, Arch packaging notes and removal steps are in
+[the installation guide](docs/INSTALL.md).
 
-Для MVP готовый пакет поддерживается только на Arch Linux и совместимых
-дистрибутивах (включая CachyOS). Пакеты для Debian, Fedora и других систем не
-заявляются; для них будет отдельная проверяемая source-build инструкция.
+## Usage
 
-В MVP не добавляются Cobra/Viper, БД, daemon, Wayland/GPG libraries или
-собственная криптография.
+Open the panel:
 
-## Документация
+```sh
+noctalia msg panel-toggle zer0/waypass:waypass
+```
 
-- [Замысел и продуктовая цель](docs/VISION.md)
-- [Архитектура](docs/ARCHITECTURE.md)
-- [AI-контекст и правила работы](AGENTS.md)
-- [ExecPlan](.docs/execplans/zer0-waypass/plan.md)
-- [Статус](.docs/execplans/zer0-waypass/status.md)
+Alternatively, type `/wp` followed by an entry-name query in the Noctalia
+launcher. The repository includes an opt-in
+[Hyprland keybind example](examples/hyprland.lua); it never edits the user's
+configuration automatically.
 
-## Текущее состояние
+The panel shows public metadata declared by the encrypted field manifest.
+Secret fields are copied only after an explicit action and remain available for
+at most the configured clipboard budget.
 
-Metadata/backend helper Milestone 2 реализован: доступны строгие команды
-`list [query]` и `status` для `gopass ls --flat`. Clipboard owner/copy logic и
-Noctalia UI ещё не реализованы.
+> [!WARNING]
+> `--sensitive` is a hint, not a universal clipboard-history guarantee. Configure
+> and verify your clipboard manager separately. See
+> [clipboard behavior and the tested cliphist wrapper](docs/CLIPBOARD.md).
+
+## Security
+
+zer0-waypass delegates storage and cryptography to `gopass`, GPG and
+`gpg-agent`; it implements no cryptographic algorithms. Secrets must never be
+passed in process arguments, logs, Noctalia state/settings/cache or committed
+fixtures. Read the [threat model](docs/SECURITY.md) and use the
+[private reporting policy](SECURITY.md) for suspected vulnerabilities.
+
+## Project status
+
+The helper, launcher, panel, guarded clipboard lifecycle and Arch packaging are
+implemented. The repository is not yet a Noctalia community release candidate:
+a real 960x540 WebP thumbnail, plugin-local public README/translations,
+community validation and maintainer confirmation for the external Arch-only
+helper dependency are still required.
+
+See [CHANGELOG.md](CHANGELOG.md) for release-facing changes and the internal
+[implementation status](.docs/execplans/zer0-waypass/status.md) for verified
+milestone evidence.
+
+## Documentation
+
+- [Installation](docs/INSTALL.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security model](docs/SECURITY.md)
+- [Clipboard behavior](docs/CLIPBOARD.md)
+- [Protocol](docs/PROTOCOL.md)
+- [Field contract](docs/FIELD-CONTRACT.md)
+- [Release process](docs/RELEASING.md)
+- [Architecture decisions](docs/decisions)
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Contributions are licensed under
+[Apache License 2.0](LICENSE).

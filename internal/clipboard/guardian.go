@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"zer0-waypass/internal/backend"
-	"zer0-waypass/internal/protocol"
+	"github.com/andrey-losikhin/zer0-waypass/internal/backend"
+	"github.com/andrey-losikhin/zer0-waypass/internal/protocol"
 )
 
 const (
