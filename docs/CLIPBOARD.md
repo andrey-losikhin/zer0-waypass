@@ -16,7 +16,7 @@ The operation creates an `os.Pipe`. Its write end is assigned directly to
 owner argv is exactly:
 
 ```text
-wl-copy --sensitive --foreground --type text/plain;charset=utf-8
+wl-copy --sensitive --foreground --trim-newline --type text/plain;charset=utf-8
 ```
 
 Production Go code does not read, convert, buffer, log, persist, or return the

@@ -13,6 +13,7 @@ const (
 	ErrorBackendInvalidData    ErrorCode = "backend_invalid_data"
 	ErrorBackendOutputTooLarge ErrorCode = "backend_output_too_large"
 	ErrorBackend               ErrorCode = "backend_error"
+	ErrorBackendLocked         ErrorCode = "backend_locked"
 	ErrorOutput                ErrorCode = "output_error"
 )
 
@@ -53,6 +54,7 @@ func validErrorCode(code ErrorCode) bool {
 		ErrorBackendInvalidData,
 		ErrorBackendOutputTooLarge,
 		ErrorBackend,
+		ErrorBackendLocked,
 		ErrorOutput:
 		return true
 	default:

@@ -83,6 +83,8 @@ func (g *Gopass) Fields(ctx context.Context, entryPath string) (FieldSet, error)
 		}
 		if field.Visibility == "public" {
 			value, err := g.outputBounded(ctx, maxPublicValueBytes, "show", "--noparsing", "--", valuePath)
+			// gopass stores inserted values with one terminating newline.
+			value = bytes.TrimSuffix(value, []byte("\n"))
 			if err != nil || !validFieldValue(value, field.Multiline) {
 				return FieldSet{}, ErrInvalidManifest
 			}
@@ -100,12 +102,50 @@ func (g *Gopass) legacyFields(ctx context.Context, entryPath string) (FieldSet, 
 	if err := g.requireMember(ctx, entryPath); err != nil {
 		return FieldSet{}, err
 	}
-	fields := []Field{{ID: "legacy-password", Name: "Password", Kind: "password", Visibility: "secret"}}
-	username, err := g.outputBounded(ctx, maxPublicValueBytes, "show", "--", entryPath, "username")
-	if err == nil && validFieldValue(username, false) {
-		fields = append(fields, Field{ID: "legacy-username", Name: "Username", Kind: "username", Visibility: "public", Value: string(username)})
+	// Legacy gopass records have no field manifest. Read the record only for
+	// this explicit card request, derive its non-empty named fields, and keep
+	// unknown values secret. This compatibility path never persists the record.
+	raw, err := g.outputBounded(ctx, maxPublicFieldsBytes, "show", "--noparsing", "--", entryPath)
+	if err != nil {
+		return FieldSet{}, err
 	}
-	return FieldSet{Revision: "", Fields: fields}, nil
+	return FieldSet{Revision: "", Fields: parseLegacyFields(raw)}, nil
+}
+
+func parseLegacyFields(raw []byte) []Field {
+	lines := strings.Split(string(raw), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+	fields := make([]Field, 0, len(lines))
+	if lines[0] != "" {
+		fields = append(fields, Field{ID: "legacy-password", Name: "Password", Kind: "password", Visibility: "secret"})
+	}
+	seen := map[string]bool{"Password": true}
+	for _, line := range lines[1:] {
+		name, value, ok := strings.Cut(line, ":")
+		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+		if !ok || value == "" || !validDisplayName(name) || seen[name] {
+			continue
+		}
+		seen[name] = true
+		kind := strings.ToLower(strings.ReplaceAll(name, " ", "_"))
+		policy, standard := standardFields[kind]
+		field := Field{ID: "legacy-" + legacyFieldID(name), Name: name, Kind: "custom", Visibility: "secret"}
+		if standard {
+			field.Kind, field.Visibility, field.Multiline = kind, policy.visibility, policy.multiline
+		}
+		if field.Visibility == "public" && validFieldValue([]byte(value), field.Multiline) {
+			field.Value = value
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+func legacyFieldID(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return base64.RawURLEncoding.EncodeToString(sum[:16])
 }
 
 func (g *Gopass) ResolveField(ctx context.Context, entryPath, revision, fieldID string) (string, error) {

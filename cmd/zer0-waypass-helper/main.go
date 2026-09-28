@@ -20,7 +20,10 @@ import (
 
 const (
 	metadataOperationTimeout = 10 * time.Second
-	maxQueryBytes            = 4096
+	// Below the 60 s callback cap of noctalia.runAsync, so the helper exits
+	// with its own error instead of being killed by the host.
+	unlockOperationTimeout = 55 * time.Second
+	maxQueryBytes          = 4096
 )
 
 type metadataBackend interface {
@@ -30,6 +33,10 @@ type metadataBackend interface {
 type fieldBackend interface {
 	Fields(context.Context, string) (backend.FieldSet, error)
 	ResolveField(context.Context, string, string, string) (string, error)
+}
+
+type lockChecker interface {
+	KeyCached(context.Context) (bool, error)
 }
 
 type copyAction uint8
@@ -121,7 +128,10 @@ func run(ctx context.Context, args []string, store metadataBackend, stdout, stde
 		defer cancel()
 		return runStatus(metadataContext, store, stdout, stderr)
 	case "fields":
-		if len(args) != 2 {
+		// --allow-prompt skips the lock check right after an explicit unlock,
+		// so a misdetected cache cannot trap the panel in an unlock loop.
+		allowPrompt := len(args) == 3 && args[2] == "--allow-prompt"
+		if len(args) != 2 && !allowPrompt {
 			return invocationError(stderr)
 		}
 		entryPath, err := protocol.DecodeEntryID(protocol.EntryID(args[1]))
@@ -134,6 +144,15 @@ func run(ctx context.Context, args []string, store metadataBackend, stdout, stde
 		}
 		metadataContext, cancel := context.WithTimeout(ctx, metadataOperationTimeout)
 		defer cancel()
+		if checker, ok := store.(lockChecker); ok && !allowPrompt {
+			cached, err := checker.KeyCached(metadataContext)
+			if err != nil {
+				return operationError(stderr, backendErrorCode(err))
+			}
+			if !cached {
+				return operationError(stderr, protocol.ErrorBackendLocked)
+			}
+		}
 		set, err := fieldStore.Fields(metadataContext, entryPath)
 		if err != nil {
 			return operationError(stderr, backendErrorCode(err))
@@ -143,6 +162,26 @@ func run(ctx context.Context, args []string, store metadataBackend, stdout, stde
 			fields[i] = protocol.FieldItem{ID: f.ID, Name: f.Name, Kind: f.Kind, Visibility: f.Visibility, Multiline: f.Multiline, Value: f.Value}
 		}
 		return writeJSON(stdout, stderr, protocol.FieldsEnvelope{Protocol: protocol.FieldProtocolVersion, Revision: set.Revision, Fields: fields})
+	case "unlock":
+		// Decrypts the entry card once and discards it, only to let gpg-agent
+		// ask for the passphrase while no Waypass surface covers pinentry.
+		if len(args) != 2 {
+			return invocationError(stderr)
+		}
+		entryPath, err := protocol.DecodeEntryID(protocol.EntryID(args[1]))
+		if err != nil {
+			return invocationError(stderr)
+		}
+		fieldStore, ok := store.(fieldBackend)
+		if !ok {
+			return operationError(stderr, protocol.ErrorBackend)
+		}
+		unlockContext, cancel := context.WithTimeout(ctx, unlockOperationTimeout)
+		defer cancel()
+		if _, err := fieldStore.Fields(unlockContext, entryPath); err != nil {
+			return operationError(stderr, backendErrorCode(err))
+		}
+		return 0
 	case "copy":
 		if len(args) == 7 && args[1] == "field" && args[5] == "--ttl" {
 			entryPath, err := protocol.DecodeEntryID(protocol.EntryID(args[2]))

@@ -15,6 +15,7 @@ func TestMarshalErrorExactClosedShape(t *testing.T) {
 		ErrorBackendInvalidData,
 		ErrorBackendOutputTooLarge,
 		ErrorBackend,
+		ErrorBackendLocked,
 		ErrorOutput,
 	}
 	for _, code := range codes {

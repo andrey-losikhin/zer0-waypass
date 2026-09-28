@@ -135,6 +135,10 @@ allows exactly these stable codes:
 - `invalid_invocation` (exit 2);
 - `backend_unavailable`, `backend_timeout`, `operation_canceled`;
 - `backend_invalid_data`, `backend_output_too_large`, `backend_error`;
+- `backend_locked`: `fields` found no gpg-agent cached (or passphrase-less)
+  decryption key for the root store recipients and did not decrypt. The panel
+  then closes, runs `unlock <entry-id>` so pinentry is not covered by the
+  layer-shell surface, and retries once with `fields <entry-id> --allow-prompt`;
 - `output_error` (all operation and output errors exit 1).
 
 Codes remain stable within protocol v1. Consumers must handle an unknown code

@@ -62,11 +62,19 @@ func runFakeGopassExecutable() int {
 }
 
 type fakeBackend struct {
-	entries  []string
-	err      error
-	calls    int
-	fieldSet backend.FieldSet
-	fieldErr error
+	entries     []string
+	err         error
+	calls       int
+	fieldSet    backend.FieldSet
+	fieldErr    error
+	fieldCalls  int
+	locked      bool
+	lockChecked int
+}
+
+func (b *fakeBackend) KeyCached(context.Context) (bool, error) {
+	b.lockChecked++
+	return !b.locked, nil
 }
 
 func (b *fakeBackend) List(context.Context) ([]string, error) {
@@ -75,6 +83,7 @@ func (b *fakeBackend) List(context.Context) ([]string, error) {
 }
 
 func (b *fakeBackend) Fields(context.Context, string) (backend.FieldSet, error) {
+	b.fieldCalls++
 	return b.fieldSet, b.fieldErr
 }
 func (b *fakeBackend) ResolveField(context.Context, string, string, string) (string, error) {
@@ -651,6 +660,49 @@ func TestCopyFieldValidatesTokensAndDispatches(t *testing.T) {
 	code, _, _ = runForTest(t, []string{"copy", "field", string(entryID), "-bad", fieldID, "--ttl", "30"}, &fakeBackend{})
 	if code != 2 || called {
 		t.Fatal("invalid revision reached dispatcher")
+	}
+}
+
+func TestFieldsReportsLockedKeyWithoutDecrypting(t *testing.T) {
+	entryID, _ := protocol.EncodeCanonicalPath("work/db")
+	store := &fakeBackend{locked: true}
+	code, stdout, stderr := runForTest(t, []string{"fields", string(entryID)}, store)
+	if code != 1 || stdout != "" || stderr != errorLine(protocol.ErrorBackendLocked) || store.fieldCalls != 0 {
+		t.Fatalf("result %d %q %q decrypts=%d", code, stdout, stderr, store.fieldCalls)
+	}
+}
+
+func TestFieldsAllowPromptSkipsLockCheck(t *testing.T) {
+	entryID, _ := protocol.EncodeCanonicalPath("work/db")
+	store := &fakeBackend{locked: true}
+	code, _, stderr := runForTest(t, []string{"fields", string(entryID), "--allow-prompt"}, store)
+	if code != 0 || stderr != "" || store.lockChecked != 0 || store.fieldCalls != 1 {
+		t.Fatalf("result %d %q checks=%d decrypts=%d", code, stderr, store.lockChecked, store.fieldCalls)
+	}
+	if code, _, _ := runForTest(t, []string{"fields", string(entryID), "--other"}, store); code != 2 {
+		t.Fatalf("unknown flag accepted: %d", code)
+	}
+}
+
+func TestUnlockDecryptsWithoutOutput(t *testing.T) {
+	entryID, _ := protocol.EncodeCanonicalPath("work/db")
+	store := &fakeBackend{locked: true, fieldSet: backend.FieldSet{Fields: []backend.Field{{ID: "x", Name: "Notes", Kind: "notes", Visibility: "public", Value: "visible"}}}}
+	code, stdout, stderr := runForTest(t, []string{"unlock", string(entryID)}, store)
+	if code != 0 || stdout != "" || stderr != "" || store.fieldCalls != 1 || store.lockChecked != 0 {
+		t.Fatalf("result %d %q %q", code, stdout, stderr)
+	}
+	store.fieldErr = backend.ErrCanceled
+	if code, _, stderr := runForTest(t, []string{"unlock", string(entryID)}, store); code != 1 || stderr != errorLine(protocol.ErrorOperationCanceled) {
+		t.Fatalf("canceled unlock %d %q", code, stderr)
+	}
+	if code, _, _ := runForTest(t, []string{"unlock", "../etc"}, store); code != 2 {
+		t.Fatal("invalid entry ID accepted")
+	}
+}
+
+func TestUnlockTimeoutFitsNoctaliaCallbackCap(t *testing.T) {
+	if unlockOperationTimeout >= 60*time.Second {
+		t.Fatalf("unlockOperationTimeout = %v, must stay below 60s", unlockOperationTimeout)
 	}
 }
 
