@@ -63,6 +63,11 @@ func (g *Gopass) requireMember(ctx context.Context, entryPath string) error {
 	if _, err := protocol.EncodeCanonicalPath(entryPath); err != nil {
 		return ErrInvalidEntry
 	}
+	// gopass >= 1.17 omits dot-prefixed paths from `ls`, so reserved sidecars
+	// are confirmed by their encrypted file in the root store instead.
+	if strings.HasPrefix(entryPath, ReservedFieldPrefix) {
+		return g.requireSidecar(ctx, entryPath)
+	}
 
 	entries, err := g.List(ctx)
 	if err != nil {
