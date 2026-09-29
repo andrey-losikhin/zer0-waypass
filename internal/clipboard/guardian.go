@@ -3,6 +3,7 @@ package clipboard
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -74,8 +76,18 @@ func copyGuardedWithExecutable(ctx context.Context, executable string, action ba
 	return copyGuardedRequest(ctx, executable, action, entryPath, "", "", policy)
 }
 
+// CopyLegacyFieldGuarded copies one named key of a legacy entry; the guardian
+// maps the card field ID to the key name from a fresh read of the entry.
+func CopyLegacyFieldGuarded(ctx context.Context, entryPath, fieldID string, policy Policy) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return ErrFailed
+	}
+	return copyGuardedRequest(ctx, executable, backend.SecretLegacyField, entryPath, "", fieldID, policy)
+}
+
 func copyGuardedRequest(ctx context.Context, executable string, action backend.SecretAction, entryPath, revision, fieldID string, policy Policy) error {
-	if action != backend.SecretUsername && action != backend.SecretPassword && action != backend.SecretField {
+	if action != backend.SecretUsername && action != backend.SecretPassword && action != backend.SecretField && action != backend.SecretTOTP && action != backend.SecretLegacyField {
 		return backend.ErrInvalidSecretAction
 	}
 	if _, err := protocol.EncodeCanonicalPath(entryPath); err != nil {
@@ -318,11 +330,25 @@ func runGuardian(request io.Reader, status io.Writer, source secretSource) int {
 			return 0
 		}
 	}
-	err = copyWithPolicy(
+	prepare := func(ctx context.Context) (backend.SecretRequest, error) {
+		return source.PrepareSecret(ctx, action, entryPath)
+	}
+	if action == backend.SecretLegacyField {
+		resolver, ok := source.(interface {
+			PrepareLegacyField(context.Context, string, string) (backend.SecretRequest, error)
+		})
+		if !ok {
+			_ = encoder.Encode(guardianStatus{Protocol: guardianProtocol, Type: "DONE", Code: encodeGuardianError(ErrFailed)})
+			return 0
+		}
+		prepare = func(ctx context.Context) (backend.SecretRequest, error) {
+			return resolver.PrepareLegacyField(ctx, start.EntryPath, start.FieldID)
+		}
+	}
+	err = copyPreparedWithPolicy(
 		guardianContext,
 		source,
-		action,
-		entryPath,
+		prepare,
 		policy,
 		nil,
 		func(ownerPGID, backendPGID int) error {
@@ -354,6 +380,10 @@ func validateGuardianStart(start guardianStart) (backend.SecretAction, Policy, e
 		action = backend.SecretPassword
 	case "field":
 		action = backend.SecretField
+	case "totp":
+		action = backend.SecretTOTP
+	case "legacy-field":
+		action = backend.SecretLegacyField
 	default:
 		return 0, Policy{}, ErrFailed
 	}
@@ -362,6 +392,10 @@ func validateGuardianStart(start guardianStart) (backend.SecretAction, Policy, e
 	}
 	if action == backend.SecretField {
 		if len(start.Revision) != 43 || len(start.FieldID) != 22 {
+			return 0, Policy{}, ErrFailed
+		}
+	} else if action == backend.SecretLegacyField {
+		if start.Revision != "" || !validLegacyFieldID(start.FieldID) {
 			return 0, Policy{}, ErrFailed
 		}
 	} else if start.Revision != "" || start.FieldID != "" {
@@ -379,13 +413,31 @@ func validateGuardianStart(start guardianStart) (backend.SecretAction, Policy, e
 }
 
 func guardianActionName(action backend.SecretAction) string {
-	if action == backend.SecretUsername {
+	switch action {
+	case backend.SecretUsername:
 		return "username"
-	}
-	if action == backend.SecretField {
+	case backend.SecretField:
 		return "field"
+	case backend.SecretTOTP:
+		return "totp"
+	case backend.SecretLegacyField:
+		return "legacy-field"
 	}
 	return "password"
+}
+
+// validLegacyFieldID accepts "legacy-password" or "legacy-" plus a 16-byte
+// raw base64url digest, the only IDs the legacy card parser emits.
+func validLegacyFieldID(id string) bool {
+	if id == "legacy-password" {
+		return true
+	}
+	token, ok := strings.CutPrefix(id, "legacy-")
+	if !ok || len(token) != 22 {
+		return false
+	}
+	b, err := base64.RawURLEncoding.DecodeString(token)
+	return err == nil && len(b) == 16 && base64.RawURLEncoding.EncodeToString(b) == token
 }
 
 func stopGuardian(command *exec.Cmd, waitDone <-chan error, ctx context.Context, result error) error {

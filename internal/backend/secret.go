@@ -20,6 +20,11 @@ const (
 	SecretUsername SecretAction = iota + 1
 	SecretPassword
 	SecretField
+	// SecretTOTP streams only the current code from `gopass otp`; the seed
+	// never leaves the gopass process.
+	SecretTOTP
+	// SecretLegacyField streams one named key of a legacy key-value entry.
+	SecretLegacyField
 )
 
 var (
@@ -44,19 +49,86 @@ type SecretProcess struct {
 type SecretRequest struct {
 	action    SecretAction
 	entryPath string
+	key       string
 }
 
 // PrepareSecret validates the closed action allowlist, validates every path in
 // a fresh metadata listing, and requires an exact match. An EntryID alone is
 // not authorization.
 func (g *Gopass) PrepareSecret(ctx context.Context, action SecretAction, entryPath string) (SecretRequest, error) {
-	if action != SecretUsername && action != SecretPassword && action != SecretField {
+	if action != SecretUsername && action != SecretPassword && action != SecretField && action != SecretTOTP {
 		return SecretRequest{}, ErrInvalidSecretAction
 	}
 	if err := g.requireMember(ctx, entryPath); err != nil {
 		return SecretRequest{}, err
 	}
-	return SecretRequest{action: action, entryPath: entryPath}, nil
+	if action == SecretField || strings.HasPrefix(entryPath, ReservedFieldPrefix) {
+		return SecretRequest{action: action, entryPath: entryPath}, nil
+	}
+	// A field-bundle entry keeps its values in sidecars; its main entry may
+	// hold only a compatibility marker, so resolve the value by field kind.
+	valuePath, found, err := g.manifestValuePath(ctx, entryPath, secretFieldKind[action])
+	if err != nil {
+		return SecretRequest{}, err
+	}
+	if !found {
+		return SecretRequest{action: action, entryPath: entryPath}, nil
+	}
+	if action == SecretTOTP {
+		return SecretRequest{action: SecretTOTP, entryPath: valuePath}, nil
+	}
+	return SecretRequest{action: SecretField, entryPath: valuePath}, nil
+}
+
+var secretFieldKind = map[SecretAction]string{SecretUsername: "username", SecretPassword: "password", SecretTOTP: "totp_secret"}
+
+// manifestValuePath reports found=false only for entries without a manifest.
+func (g *Gopass) manifestValuePath(ctx context.Context, entryPath, kind string) (string, bool, error) {
+	m, err := g.loadMemberManifest(ctx, entryPath)
+	if errors.Is(err, ErrEntryNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	for _, field := range m.Fields {
+		if field.Kind == kind {
+			valuePath := fieldValuePath(m, field.ID)
+			if err := g.requireMember(ctx, valuePath); err != nil {
+				return "", false, ErrInvalidManifest
+			}
+			return valuePath, true, nil
+		}
+	}
+	return "", false, ErrEntryNotFound
+}
+
+// PrepareLegacyField maps a legacy card field ID back to its key name. It reads
+// the entry like Fields does, but returns only the validated key name.
+func (g *Gopass) PrepareLegacyField(ctx context.Context, entryPath, fieldID string) (SecretRequest, error) {
+	if strings.HasPrefix(entryPath, ReservedFieldPrefix) {
+		return SecretRequest{}, ErrInvalidEntry
+	}
+	set, err := g.Fields(ctx, entryPath)
+	if err != nil {
+		return SecretRequest{}, err
+	}
+	if set.Revision != "" {
+		return SecretRequest{}, ErrInvalidManifest
+	}
+	for _, field := range set.Fields {
+		if field.ID != fieldID {
+			continue
+		}
+		if field.ID == "legacy-password" {
+			return SecretRequest{action: SecretPassword, entryPath: entryPath}, nil
+		}
+		if !validDisplayName(field.Name) || strings.HasPrefix(field.Name, "-") {
+			return SecretRequest{}, ErrInvalidEntry
+		}
+		return SecretRequest{action: SecretLegacyField, entryPath: entryPath, key: field.Name}, nil
+	}
+	return SecretRequest{}, ErrEntryNotFound
 }
 
 func (g *Gopass) requireMember(ctx context.Context, entryPath string) error {
@@ -111,6 +183,13 @@ func (g *Gopass) StartSecret(ctx context.Context, request SecretRequest, stdout 
 			return nil, ErrInvalidSecretAction
 		}
 		args = []string{"show", "--noparsing", "--", request.entryPath}
+	case SecretTOTP:
+		args = []string{"otp", "--password", "--", request.entryPath}
+	case SecretLegacyField:
+		if request.key == "" || strings.HasPrefix(request.entryPath, ReservedFieldPrefix) {
+			return nil, ErrInvalidSecretAction
+		}
+		args = []string{"show", "--nofuzzysearch", "--", request.entryPath, request.key}
 	default:
 		return nil, ErrInvalidSecretAction
 	}

@@ -1,0 +1,54 @@
+{
+  "list": {
+    "placeholder": "Search password entries",
+    "hint": "Enter: open card",
+    "searching": "Searching…",
+    "empty": "No entries found",
+    "error": "Unable to read password entries",
+    "more_up": "↑ {count} more",
+    "more_down": "↓ {count} more",
+    "recent": "Recent"
+  },
+  "card": {
+    "back": "Back to list",
+    "entry": "Entry",
+    "hint": "1–9 / arrows: select · Enter: copy · Esc/Backspace: back",
+    "hint_locked": "Enter: unlock · Esc/Backspace: back",
+    "loading": "Loading fields…",
+    "empty": "No fields available",
+    "error": "Unable to read this entry",
+    "hidden": "Hidden — copy only",
+    "copy": "Copy",
+    "copy_code": "Copy code",
+    "totp_value": "One-time code — copied fresh",
+    "locked_title": "GPG key is locked",
+    "locked_body": "The panel hides while pinentry asks for the passphrase and reopens after unlock.",
+    "unlock": "Unlock"
+  },
+  "launcher": {
+    "password_title": "{label} — password",
+    "password_subtitle": "Copy password (up to {ttl} seconds)",
+    "username_title": "{label} — username",
+    "username_subtitle": "Copy username (up to {ttl} seconds)",
+    "unavailable": "zer0-waypass helper unavailable",
+    "unavailable_hint": "Install or start zer0-waypass-helper",
+    "backend_error": "Backend error",
+    "backend_error_hint": "Unable to read password-store metadata",
+    "empty": "No entries found",
+    "empty_hint": "Try a different search"
+  },
+  "settings": {
+    "clipboard_ttl": {
+      "label": "Clipboard lifetime",
+      "description": "Seconds a copied value stays in the clipboard (5–120)"
+    },
+    "notify_on_error": {
+      "label": "Notify on copy errors",
+      "description": "Show a desktop notification when a copy fails or times out"
+    },
+    "recent_first": {
+      "label": "Recent entries first",
+      "description": "Keep up to 10 recently copied entry IDs (no values) and list them first"
+    }
+  }
+}

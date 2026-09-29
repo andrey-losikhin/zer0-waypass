@@ -178,6 +178,14 @@ func (g *Gopass) loadManifest(ctx context.Context, entryPath string) (manifest, 
 	if err := g.requireMember(ctx, entryPath); err != nil {
 		return manifest{}, err
 	}
+	return g.loadMemberManifest(ctx, entryPath)
+}
+
+// loadMemberManifest assumes the caller has just confirmed entryPath membership.
+func (g *Gopass) loadMemberManifest(ctx context.Context, entryPath string) (manifest, error) {
+	if strings.HasPrefix(entryPath, ReservedFieldPrefix) {
+		return manifest{}, ErrInvalidManifest
+	}
 	manifestPath, err := fieldManifestPath(entryPath)
 	if err != nil {
 		return manifest{}, ErrInvalidManifest

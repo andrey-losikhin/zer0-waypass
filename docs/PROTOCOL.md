@@ -4,7 +4,12 @@
 
 Protocol v1 не изменён. Карточка использует отдельный protocol v2 и Waypass
 Field Contract v1 из `docs/FIELD-CONTRACT.md`: `fields <entry-id>` и
-`copy field <entry-id> <revision> <field-id> --ttl <seconds>`. Raw field name
+`copy field <entry-id> <revision> <field-id> --ttl <seconds>`. Legacy-карточка
+копирует поля через `copy legacy-field <entry-id> legacy-<22-char-id> --ttl
+<seconds>`; `copy totp <entry-id> --ttl <seconds>` копирует текущий TOTP-код.
+Для entry с manifest `copy username|password|totp` берут значение из поля
+соответствующего kind. Любая форма `copy` принимает завершающий `--notify`:
+при ошибке helper показывает desktop-уведомление без секретов. Raw field name
 не является authority или готовым argv. Public values могут присутствовать
 только в v2 fields envelope; secret values в JSON отсутствуют.
 

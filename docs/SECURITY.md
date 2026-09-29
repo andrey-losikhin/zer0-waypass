@@ -8,7 +8,18 @@ Bounded spike `gopass 1.16.1` подтвердил, что live-список и�
 output для parsing имён: это поместило бы password, notes, keys, tokens и body в
 Go memory и разрушило прямую FD-to-FD границу.
 
-Parsing legacy entry и probing raw names запрещены. Field Contract v1 хранит
+Исключение по решению владельца (2026-09-25): для legacy-записей без manifest
+helper по явному `fields`/`copy legacy-field` читает запись целиком в память,
+чтобы вывести имена непустых полей и сопоставить opaque field ID с именем
+ключа. Значения secret-полей не возвращаются в Noctalia; само копирование
+идёт FD-to-FD через `gopass show --nofuzzysearch -- <entry> <key>`.
+
+TOTP копируется через `gopass otp --password -- <path>`: в clipboard попадает
+только текущий код, seed не покидает процесс gopass и не читается helper-ом.
+Уведомление об ошибке copy (`--notify`) — фиксированный argv `notify-send` с
+текстом, выбранным по redacted error code; секреты и имена в него не попадают.
+
+Для остальных случаев probing raw names запрещён. Field Contract v1 хранит
 schema в encrypted manifest, а каждое value — отдельным encrypted entry.
 `public` values осознанно возвращаются в ephemeral protocol-v2 JSON и Noctalia;
 `secret` values остаются только в FD-to-FD clipboard pipeline. Copy повторно

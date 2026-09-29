@@ -7,6 +7,13 @@ local HELPER = "zer0-waypass-helper"
 -- Noctalia bounds callback-style runAsync calls; debounce_ms in plugin.toml
 -- additionally coalesces rapid launcher queries.
 
+local tr = noctalia.tr
+
+local function ttlArg()
+  local ttl = tonumber(noctalia.getConfig("clipboard_ttl")) or 30
+  return tostring(math.floor(math.max(5, math.min(120, ttl))))
+end
+
 local function rows(decoded)
   local result = {}
   if type(decoded) ~= "table" or type(decoded.items) ~= "table" then
@@ -16,14 +23,14 @@ local function rows(decoded)
     if type(item) == "table" and type(item.id) == "string" and type(item.label) == "string" then
       table.insert(result, {
         id = "copy:password:" .. item.id,
-        title = item.label .. " — password",
-        subtitle = "Copy password (up to 30 seconds)",
-        glyph = "key-round",
+        title = tr("launcher.password_title", { label = item.label }),
+        subtitle = tr("launcher.password_subtitle", { ttl = ttlArg() }),
+        glyph = "key",
       })
       table.insert(result, {
         id = "copy:username:" .. item.id,
-        title = item.label .. " — username",
-        subtitle = "Copy username (up to 30 seconds)",
+        title = tr("launcher.username_title", { label = item.label }),
+        subtitle = tr("launcher.username_subtitle", { ttl = ttlArg() }),
         glyph = "user-round",
       })
     end
@@ -44,13 +51,13 @@ function onQuery(query)
   noctalia.runAsync(argv, function(result)
     if type(result) ~= "table" or result.exitCode == nil then
       launcher.setResults(query, {
-        stateRow("zer0-waypass helper unavailable", "Install or start zer0-waypass-helper", "plug-zap"),
+        stateRow(tr("launcher.unavailable"), tr("launcher.unavailable_hint"), "plug-zap"),
       })
       return
     end
     if result.exitCode ~= 0 then
       launcher.setResults(query, {
-        stateRow("Backend error", "Unable to read password-store metadata", "triangle-alert"),
+        stateRow(tr("launcher.backend_error"), tr("launcher.backend_error_hint"), "triangle-alert"),
       })
       return
     end
@@ -58,7 +65,7 @@ function onQuery(query)
     local items = rows(decoded)
     if #items == 0 then
       launcher.setResults(query, {
-        stateRow("No entries found", "Try a different search", "search-x"),
+        stateRow(tr("launcher.empty"), tr("launcher.empty_hint"), "search-x"),
       })
       return
     end
@@ -76,5 +83,7 @@ function onActivate(id)
   end
   -- No callback: this is intentionally detached dispatch. The helper owns
   -- decrypt/clipboard lifecycle and no secret or result returns to Noctalia.
-  noctalia.runAsync({ HELPER, "copy", action, entryID, "--ttl", "30" })
+  local argv = { HELPER, "copy", action, entryID, "--ttl", ttlArg() }
+  if noctalia.getConfig("notify_on_error") ~= false then table.insert(argv, "--notify") end
+  noctalia.runAsync(argv)
 end
