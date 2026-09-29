@@ -7,7 +7,8 @@
     "error": "Unable to read password entries",
     "more_up": "↑ {count} more",
     "more_down": "↓ {count} more",
-    "recent": "Recent"
+    "frequent": "Frequent",
+    "reset_usage": "Reset usage statistics"
   },
   "card": {
     "back": "Back to list",
@@ -46,9 +47,18 @@
       "label": "Notify on copy errors",
       "description": "Show a desktop notification when a copy fails or times out"
     },
-    "recent_first": {
-      "label": "Recent entries first",
-      "description": "Keep up to 10 recently copied entry IDs (no values) and list them first"
+    "smart_sort": {
+      "label": "Smart sort",
+      "description": "Rank frequently and recently used entries first. Stores only entry IDs, a usage score and the last-use time in the plugin data directory"
+    },
+    "usage_half_life_days": {
+      "label": "Usage half-life",
+      "description": "How fast old usage fades: its weight halves after this many days",
+      "options": {
+        "7": "7 days",
+        "14": "14 days",
+        "30": "30 days"
+      }
     }
   }
 }

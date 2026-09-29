@@ -8,32 +8,46 @@ local HELPER = "zer0-waypass-helper"
 -- additionally coalesces rapid launcher queries.
 
 local tr = noctalia.tr
+local usageStats = require("./shared.luau")
 
 local function ttlArg()
   local ttl = tonumber(noctalia.getConfig("clipboard_ttl")) or 30
   return tostring(math.floor(math.max(5, math.min(120, ttl))))
 end
 
-local function rows(decoded)
+-- complete: the listing was not filtered by a query, so stale usage IDs can be pruned.
+local function rows(decoded, complete)
   local result = {}
   if type(decoded) ~= "table" or type(decoded.items) ~= "table" then
     return result
   end
-  for _, item in ipairs(decoded.items) do
+  local entries, valid = {}, {}
+  for order, item in ipairs(decoded.items) do
     if type(item) == "table" and type(item.id) == "string" and type(item.label) == "string" then
-      table.insert(result, {
-        id = "copy:password:" .. item.id,
-        title = tr("launcher.password_title", { label = item.label }),
-        subtitle = tr("launcher.password_subtitle", { ttl = ttlArg() }),
-        glyph = "key",
-      })
-      table.insert(result, {
-        id = "copy:username:" .. item.id,
-        title = tr("launcher.username_title", { label = item.label }),
-        subtitle = tr("launcher.username_subtitle", { ttl = ttlArg() }),
-        glyph = "user-round",
-      })
+      table.insert(entries, { id = item.id, label = item.label, order = order })
+      valid[item.id] = true
     end
+  end
+  local usage = usageStats.load(complete and valid or nil)
+  local now = noctalia.nowMs()
+  for _, entry in ipairs(entries) do entry.weight = usageStats.weight(usage[entry.id], now) end
+  table.sort(entries, function(a, b)
+    if a.weight ~= b.weight then return a.weight > b.weight end
+    return a.order < b.order
+  end)
+  for _, item in ipairs(entries) do
+    table.insert(result, {
+      id = "copy:password:" .. item.id,
+      title = tr("launcher.password_title", { label = item.label }),
+      subtitle = tr("launcher.password_subtitle", { ttl = ttlArg() }),
+      glyph = "key",
+    })
+    table.insert(result, {
+      id = "copy:username:" .. item.id,
+      title = tr("launcher.username_title", { label = item.label }),
+      subtitle = tr("launcher.username_subtitle", { ttl = ttlArg() }),
+      glyph = "user-round",
+    })
   end
   return result
 end
@@ -62,7 +76,7 @@ function onQuery(query)
       return
     end
     local decoded = noctalia.json.decode(result.stdout or "")
-    local items = rows(decoded)
+    local items = rows(decoded, text == "")
     if #items == 0 then
       launcher.setResults(query, {
         stateRow(tr("launcher.empty"), tr("launcher.empty_hint"), "search-x"),
@@ -83,6 +97,7 @@ function onActivate(id)
   end
   -- No callback: this is intentionally detached dispatch. The helper owns
   -- decrypt/clipboard lifecycle and no secret or result returns to Noctalia.
+  usageStats.record(entryID, action == "password" and usageStats.WEIGHT_PRIMARY or usageStats.WEIGHT_FIELD)
   local argv = { HELPER, "copy", action, entryID, "--ttl", ttlArg() }
   if noctalia.getConfig("notify_on_error") ~= false then table.insert(argv, "--notify") end
   noctalia.runAsync(argv)
