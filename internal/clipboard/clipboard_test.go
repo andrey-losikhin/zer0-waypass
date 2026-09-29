@@ -607,6 +607,7 @@ func main() {
  if os.Getenv("FAKE_DESCENDANT_ROLE")=="gopass" { signal.Ignore(syscall.SIGTERM); for { time.Sleep(time.Second) } }
  if os.Getenv("FAKE_AGENT_ROLE")=="agent" { runAgent() }
  if os.Getenv("FAKE_AGENT_ROLE")=="pinentry" { signal.Ignore(syscall.SIGTERM); for { time.Sleep(time.Second) } }
+ if len(os.Args)==3 && os.Args[1]=="config" && os.Args[2]=="mounts.path" { root:=os.Getenv("FAKE_STORE_ROOT"); if root=="" { root=os.TempDir() }; io.WriteString(os.Stdout, root+"\n"); return }
  log(os.Args)
  args := os.Args[1:]
  mode := os.Getenv("FAKE_GOPASS_MODE")

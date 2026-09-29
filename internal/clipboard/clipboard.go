@@ -92,9 +92,18 @@ func copyWithProcessGroupObserver(ctx context.Context, source secretSource, acti
 }
 
 func copyWithPolicy(ctx context.Context, source secretSource, action backend.SecretAction, entryPath string, policy Policy, beforeSecretStart func(), observe func(ownerPGID, backendPGID int) error) error {
-	if action != backend.SecretUsername && action != backend.SecretPassword && action != backend.SecretField {
+	if action != backend.SecretUsername && action != backend.SecretPassword && action != backend.SecretField && action != backend.SecretTOTP {
 		return backend.ErrInvalidSecretAction
 	}
+	prepare := func(ctx context.Context) (backend.SecretRequest, error) {
+		return source.PrepareSecret(ctx, action, entryPath)
+	}
+	return copyPreparedWithPolicy(ctx, source, prepare, policy, beforeSecretStart, observe)
+}
+
+// copyPreparedWithPolicy runs prepare inside the acquisition deadline, so
+// resolving the request counts against the same bound as gopass/pinentry.
+func copyPreparedWithPolicy(ctx context.Context, source secretSource, prepare func(context.Context) (backend.SecretRequest, error), policy Policy, beforeSecretStart func(), observe func(ownerPGID, backendPGID int) error) error {
 	if err := ValidatePolicy(policy); err != nil {
 		return ErrInvalidPolicy
 	}
@@ -104,7 +113,7 @@ func copyWithPolicy(ctx context.Context, source secretSource, action backend.Sec
 	acquisitionContext, cancelAcquisition := context.WithTimeout(operationContext, policy.AcquisitionDeadline)
 	defer cancelAcquisition()
 
-	request, err := source.PrepareSecret(acquisitionContext, action, entryPath)
+	request, err := prepare(acquisitionContext)
 	if err != nil {
 		return err
 	}

@@ -2,9 +2,9 @@
 -- Public values are ephemeral; secret values never enter this module.
 local HELPER = "zer0-waypass-helper"
 local SESSION_TTL_MS = 3 * 60 * 1000
-local query, items, fields = "", {}, {}
+local query, allItems, items, fields = "", {}, {}, {}
 local selectedIndex, fieldIndex = 0, 0
-local mode, busy, message = "list", false, "No entries found"
+local mode, busy, message = "list", false, ""
 local generation, revision, cardEntryID, cardLabel = 0, nil, nil, nil
 local rememberedQuery, rememberedEntryID, rememberedFieldID = "", nil, nil
 local rememberedCard, rememberedAtMs = false, 0
@@ -15,9 +15,38 @@ local PANEL_ID = "zer0/waypass:waypass"
 -- this layer-shell surface. Unlock runs only after the panel is closed.
 local locked, pendingUnlockID, allowPromptID, panelOpen = false, nil, nil, false
 
+local tr = noctalia.tr
+-- Recent entries hold only opaque entry IDs, never labels or values.
+local RECENT_KEY, RECENT_MAX = "recent_entry_ids", 10
+
+local function ttlArg()
+  local ttl = tonumber(noctalia.getConfig("clipboard_ttl")) or 30
+  return tostring(math.floor(math.max(5, math.min(120, ttl))))
+end
+local function copyArgv(...)
+  local argv = { HELPER, "copy", ... }
+  table.insert(argv, "--ttl"); table.insert(argv, ttlArg())
+  if noctalia.getConfig("notify_on_error") ~= false then table.insert(argv, "--notify") end
+  return argv
+end
+local function recentIDs()
+  local ids = noctalia.state.get(RECENT_KEY)
+  if type(ids) ~= "table" then return {} end
+  local result = {}
+  for _, id in ipairs(ids) do if type(id) == "string" and #result < RECENT_MAX then table.insert(result, id) end end
+  return result
+end
+local function rememberRecent(id)
+  if noctalia.getConfig("recent_first") == false then noctalia.state.set(RECENT_KEY, {}); return end
+  local ids = { id }
+  for _, old in ipairs(recentIDs()) do if old ~= id and #ids < RECENT_MAX then table.insert(ids, old) end end
+  noctalia.state.set(RECENT_KEY, ids)
+end
+
 local function selected(list, index) if index < 1 or index > #list then return nil end; return list[index] end
 -- ui.scroll cannot scroll to a child, so only a window that follows the
--- keyboard selection is rendered; sizes fit the fixed 520 px panel height.
+-- keyboard selection is rendered in a plain column. Labels are capped with
+-- maxLines, so row heights are fixed and the window fits the 520 px panel.
 local LIST_WINDOW, CARD_WINDOW = 8, 5
 local listTop, fieldTop = 1, 1
 local function windowTop(top, index, count, size)
@@ -34,20 +63,21 @@ renderList = function()
   local rows = {}
   listTop = windowTop(listTop, selectedIndex, #items, LIST_WINDOW)
   local last = math.min(#items, listTop + LIST_WINDOW - 1)
-  if listTop > 1 then table.insert(rows, moreRow("more-up", "↑ "..(listTop-1).." more", function() selectedIndex=math.max(1,listTop-LIST_WINDOW); listTop=selectedIndex; renderList() end)) end
+  if listTop > 1 then table.insert(rows, moreRow("more-up", tr("list.more_up",{count=listTop-1}), function() selectedIndex=math.max(1,listTop-LIST_WINDOW); listTop=selectedIndex; renderList() end)) end
   for index = listTop, last do
     local item = items[index]
     local active = index == selectedIndex
     table.insert(rows, ui.row({ key="entry-"..item.id, gap=10, paddingV=9, paddingH=12, radius=10, fill=active and "primary/0.12" or "surface", border=active and "primary" or "surface", borderWidth=1, onClick=function() selectedIndex=index; renderList() end }, {
-      ui.glyph({ name=active and "chevron-right" or "key-round", size=16, color=active and "primary" or "on_surface_variant" }),
-      ui.label({ text=item.label, color=active and "primary" or "on_surface", flexGrow=1 }),
+      ui.glyph({ name=active and "chevron-right" or "key", size=16, color=active and "primary" or "on_surface_variant" }),
+      ui.label({ text=item.label, color=active and "primary" or "on_surface", flexGrow=1, maxLines=1 }),
+      item.recent and ui.label({ text=tr("list.recent"), color="on_surface_variant" }) or nil,
     }))
   end
-  if last < #items then table.insert(rows, moreRow("more-down", "↓ "..(#items-last).." more", function() selectedIndex=math.min(#items,last+1); renderList() end)) end
-  if #rows == 0 then table.insert(rows, ui.label({ text=busy and "Searching…" or message, color="on_surface_variant" })) end
+  if last < #items then table.insert(rows, moreRow("more-down", tr("list.more_down",{count=#items-last}), function() selectedIndex=math.min(#items,last+1); renderList() end)) end
+  if #rows == 0 then table.insert(rows, ui.label({ text=busy and tr("list.searching") or (message~="" and message or tr("list.empty")), color="on_surface_variant" })) end
   panel.render(ui.column({ flexGrow=1, gap=12, align="stretch" }, {
-    ui.row({ gap=10, align="center" }, { ui.glyph({name="search",size=18}), ui.input({key="waypass-query",value=query,placeholder="Search password entries",flexGrow=1,focus=true,onChange="onQueryChange",onSubmit="onQuerySubmit"}) }),
-    ui.label({text="Enter: open card",color="on_surface_variant"}), ui.scroll({flexGrow=1,gap=4},rows),
+    ui.row({ gap=10, align="center" }, { ui.glyph({name="search",size=18}), ui.input({key="waypass-query",value=query,placeholder=tr("list.placeholder"),flexGrow=1,focus=true,onChange="onQueryChange",onSubmit="onQuerySubmit"}) }),
+    ui.label({text=tr("list.hint"),color="on_surface_variant"}), ui.column({flexGrow=1,gap=4,align="stretch"},rows),
   }))
 end
 
@@ -55,39 +85,58 @@ renderCard = function()
   local rows = {}
   fieldTop = windowTop(fieldTop, fieldIndex, #fields, CARD_WINDOW)
   local last = math.min(#fields, fieldTop + CARD_WINDOW - 1)
-  if fieldTop > 1 then table.insert(rows, moreRow("more-up", "↑ "..(fieldTop-1).." more", function() fieldIndex=math.max(1,fieldTop-CARD_WINDOW); fieldTop=fieldIndex; renderCard() end)) end
+  if fieldTop > 1 then table.insert(rows, moreRow("more-up", tr("list.more_up",{count=fieldTop-1}), function() fieldIndex=math.max(1,fieldTop-CARD_WINDOW); fieldTop=fieldIndex; renderCard() end)) end
   for index = fieldTop, last do
     local field = fields[index]
     local active = index == fieldIndex
-    local value = field.visibility == "public" and (field.value or "") or "Hidden — copy only"
+    local value = field.totp and tr("card.totp_value") or (field.visibility == "public" and (field.value or "") or tr("card.hidden"))
     table.insert(rows, ui.column({ key="field-"..field.id,gap=3,paddingV=9,paddingH=12,radius=10,fill=active and "primary/0.12" or "surface",border=active and "primary" or "surface",borderWidth=1,onClick=function() fieldIndex=index; renderCard() end }, {
-      ui.row({gap=8,align="center"},{ui.label({text=index<=9 and tostring(index) or "",color="primary"}),ui.label({text=field.name,fontWeight="medium",flexGrow=1}),ui.label({text="Copy",color="on_surface_variant"})}),
-      ui.label({text=value,color="on_surface_variant",wrap=true}),
+      ui.row({gap=8,align="center"},{ui.label({text=index<=9 and tostring(index) or "",color="primary"}),ui.label({text=field.name,fontWeight="medium",flexGrow=1,maxLines=1}),ui.label({text=field.totp and tr("card.copy_code") or tr("card.copy"),color="on_surface_variant"})}),
+      ui.label({text=value,color="on_surface_variant",maxLines=1}),
     }))
   end
-  if last < #fields then table.insert(rows, moreRow("more-down", "↓ "..(#fields-last).." more", function() fieldIndex=math.min(#fields,last+1); renderCard() end)) end
+  if last < #fields then table.insert(rows, moreRow("more-down", tr("list.more_down",{count=#fields-last}), function() fieldIndex=math.min(#fields,last+1); renderCard() end)) end
   if locked then
     table.insert(rows,ui.column({gap=8,paddingV=12,paddingH=12,radius=10,fill="primary/0.12",border="primary",borderWidth=1,onClick=function() copyField() end},{
-      ui.row({gap=8,align="center"},{ui.glyph({name="lock",size=16,color="primary"}),ui.label({text="GPG key is locked",fontWeight="medium",flexGrow=1}),ui.label({text="Unlock",color="primary"})}),
-      ui.label({text="The panel hides while pinentry asks for the passphrase and reopens after unlock.",color="on_surface_variant",wrap=true}),
+      ui.row({gap=8,align="center"},{ui.glyph({name="lock",size=16,color="primary"}),ui.label({text=tr("card.locked_title"),fontWeight="medium",flexGrow=1}),ui.label({text=tr("card.unlock"),color="primary"})}),
+      ui.label({text=tr("card.locked_body"),color="on_surface_variant",maxLines=3}),
     }))
-  elseif #rows == 0 then table.insert(rows,ui.label({text=busy and "Loading fields…" or message,color="on_surface_variant"})) end
-  local hint=locked and "Enter: unlock · Esc/Backspace: back" or "1–9 / arrows: select · Enter: copy · Esc/Backspace: back"
+  elseif #rows == 0 then table.insert(rows,ui.label({text=busy and tr("card.loading") or (message~="" and message or tr("card.empty")),color="on_surface_variant"})) end
+  local hint=locked and tr("card.hint_locked") or tr("card.hint")
   panel.render(ui.column({flexGrow=1,gap=12,align="stretch"},{
-    ui.row({gap=8,align="center"},{ui.button({text="Back to list",variant="ghost",onClick=back}),ui.glyph({name="key-round",size=18,color="primary"}),ui.label({text=cardLabel or "Entry",fontWeight="medium",flexGrow=1})}),
-    ui.label({text=hint,color="on_surface_variant"}),ui.scroll({flexGrow=1,gap=4},rows),
+    ui.row({gap=8,align="center"},{ui.button({text=tr("card.back"),variant="ghost",onClick=back}),ui.glyph({name="key",size=18,color="primary"}),ui.label({text=cardLabel or tr("card.entry"),fontWeight="medium",flexGrow=1})}),
+    ui.label({text=hint,color="on_surface_variant",maxLines=1}),ui.column({flexGrow=1,gap=4,align="stretch"},rows),
   }))
 end
 
+-- Fuzzy-filters the entry list loaded on open; typing never spawns the helper.
+local function applyFilter()
+  items = {}
+  local text = noctalia.string.trim(query)
+  if text == "" then
+    local rank = {}
+    if noctalia.getConfig("recent_first") ~= false then for index, id in ipairs(recentIDs()) do rank[id] = index end end
+    for _, item in ipairs(allItems) do if rank[item.id] ~= nil then table.insert(items, { id=item.id, label=item.label, recent=true, score=-rank[item.id] }) end end
+    table.sort(items, function(a, b) return a.score > b.score end)
+    for _, item in ipairs(allItems) do if rank[item.id] == nil then table.insert(items, { id=item.id, label=item.label }) end end
+  else
+    for order, item in ipairs(allItems) do
+      local score = noctalia.fuzzyScore(text, item.label)
+      if score ~= nil then table.insert(items, { id=item.id, label=item.label, score=score, order=order }) end
+    end
+    table.sort(items, function(a, b) if a.score ~= b.score then return a.score > b.score end; return a.order < b.order end)
+  end
+  selectedIndex, listTop = #items > 0 and 1 or 0, 1
+end
+
 local function search()
-  generation += 1; local current, requested = generation, query
-  busy,items,selectedIndex,message=true,{},0,"No entries found"; renderList()
-  local argv={HELPER,"list"}; if requested~="" then table.insert(argv,requested) end
-  noctalia.runAsync(argv,function(result)
-    if mode~="list" or current~=generation or requested~=query then return end
-    busy,items=false,{}
-    if type(result)=="table" and result.exitCode==0 then local d=noctalia.json.decode(result.stdout or ""); if type(d)=="table" and type(d.items)=="table" then for _,v in ipairs(d.items) do if type(v)=="table" and type(v.id)=="string" and type(v.label)=="string" then table.insert(items,{id=v.id,label=v.label}) end end end else message="Unable to read password entries" end
-    selectedIndex,listTop=#items>0 and 1 or 0,1
+  generation += 1; local current = generation
+  busy,allItems,items,selectedIndex,message=true,{},{},0,""; renderList()
+  noctalia.runAsync({HELPER,"list"},function(result)
+    if mode~="list" or current~=generation then return end
+    busy,allItems=false,{}
+    if type(result)=="table" and result.exitCode==0 then local d=noctalia.json.decode(result.stdout or ""); if type(d)=="table" and type(d.items)=="table" then for _,v in ipairs(d.items) do if type(v)=="table" and type(v.id)=="string" and type(v.label)=="string" then table.insert(allItems,{id=v.id,label=v.label}) end end end else message=tr("list.error") end
+    applyFilter()
     if restoreEntryID~=nil then for index,v in ipairs(items) do if v.id==restoreEntryID then selectedIndex=index; break end end end
     local shouldRestore=restoreCard and selected(items,selectedIndex)~=nil and selected(items,selectedIndex).id==restoreEntryID
     restoreEntryID=nil; restoreCard=false
@@ -98,7 +147,7 @@ end
 openCard = function()
   local item=selected(items,selectedIndex); if busy or item==nil then return end
   generation+=1; local current=generation
-  mode,busy,fields,fieldIndex,revision,cardEntryID,cardLabel,message,locked="card",true,{},0,nil,item.id,item.label,"No fields available",false; renderCard()
+  mode,busy,fields,fieldIndex,revision,cardEntryID,cardLabel,message,locked="card",true,{},0,nil,item.id,item.label,"",false; renderCard()
   local argv={HELPER,"fields",item.id}
   if allowPromptID==item.id then table.insert(argv,"--allow-prompt") end
   allowPromptID=nil
@@ -107,7 +156,19 @@ openCard = function()
     busy,fields=false,{}
     local failure=type(result)=="table" and result.exitCode~=0 and noctalia.json.decode(result.stderr or "") or nil
     if type(failure)=="table" and type(failure.error)=="table" and failure.error.code=="backend_locked" then locked=true; restoreFieldID=nil; renderCard(); return end
-    if type(result)=="table" and result.exitCode==0 then local d=noctalia.json.decode(result.stdout or ""); if type(d)=="table" and d.protocol==2 and type(d.revision)=="string" and type(d.fields)=="table" then revision=d.revision; for _,f in ipairs(d.fields) do if type(f)=="table" and type(f.id)=="string" and type(f.name)=="string" and (f.visibility=="public" or f.visibility=="secret") then local legacy=d.revision=="" and (f.kind=="password" or f.kind=="username") and f.kind or nil; table.insert(fields,{id=f.id,name=f.name,kind=f.kind,visibility=f.visibility,multiline=f.multiline==true,value=f.visibility=="public" and f.value or nil,legacy=legacy}) end end end else fields={{id="legacy-password",name="Password",kind="password",visibility="secret",legacy="password"},{id="legacy-username",name="Username",kind="username",visibility="secret",legacy="username"}}; message="Legacy entry" end
+    if type(result)=="table" and result.exitCode==0 then
+      local d=noctalia.json.decode(result.stdout or "")
+      if type(d)=="table" and d.protocol==2 and type(d.revision)=="string" and type(d.fields)=="table" then
+        revision=d.revision
+        for _,f in ipairs(d.fields) do
+          if type(f)=="table" and type(f.id)=="string" and type(f.name)=="string" and (f.visibility=="public" or f.visibility=="secret") then
+            -- TOTP seeds are never shown or copied; the helper copies a fresh code.
+            local totp=f.kind=="totp_secret" or (d.revision=="" and (f.name:lower()=="totp" or f.name:lower()=="otpauth"))
+            table.insert(fields,{id=f.id,name=f.name,kind=f.kind,visibility=f.visibility,multiline=f.multiline==true,value=f.visibility=="public" and f.value or nil,legacy=d.revision=="",totp=totp})
+          end
+        end
+      else message=tr("card.error") end
+    else message=tr("card.error") end
     fieldIndex,fieldTop=#fields>0 and 1 or 0,1
     if restoreFieldID~=nil then for index,f in ipairs(fields) do if f.id==restoreFieldID then fieldIndex=index; break end end end
     restoreFieldID=nil; renderCard()
@@ -119,9 +180,11 @@ copyField = function()
   if locked then pendingUnlockID=cardEntryID; panel.close(); return end
   local field=selected(fields,fieldIndex); if field==nil then return end
   local argv
-  if field.legacy~=nil then argv={HELPER,"copy",field.legacy,cardEntryID,"--ttl","30"}
-  elseif revision~=nil then argv={HELPER,"copy","field",cardEntryID,revision,field.id,"--ttl","30"}
+  if field.totp then argv=copyArgv("totp",cardEntryID)
+  elseif field.legacy then argv=copyArgv("legacy-field",cardEntryID,field.id)
+  elseif revision~=nil then argv=copyArgv("field",cardEntryID,revision,field.id)
   else return end
+  rememberRecent(cardEntryID)
   -- Do not start gopass until onClose: a layer-shell surface is always drawn
   -- above regular pinentry windows, even when pinentry owns keyboard focus.
   pendingCopyArgv=argv
@@ -143,7 +206,7 @@ function onClose()
   rememberedQuery=query; rememberedAtMs=noctalia.nowMs()
   if mode=="card" and cardEntryID~=nil then local f=selected(fields,fieldIndex); rememberedEntryID=cardEntryID; rememberedFieldID=f~=nil and f.id or nil; rememberedCard=true
   else local item=selected(items,selectedIndex); rememberedEntryID=item~=nil and item.id or nil; rememberedFieldID=nil; rememberedCard=false end
-  generation+=1; items,fields,revision,cardEntryID,locked={},{},nil,nil,false
+  generation+=1; allItems,items,fields,revision,cardEntryID,locked={},{},{},nil,nil,false
   if copyArgv~=nil then noctalia.runAsync(copyArgv) end
   if unlockID~=nil then
     noctalia.runAsync({HELPER,"unlock",unlockID},function(result)
@@ -154,7 +217,7 @@ function onClose()
     end,60000)
   end
 end
-function onQueryChange(value) if mode=="list" then query=type(value)=="string" and value or ""; restoreEntryID,restoreFieldID,restoreCard=nil,nil,false; search() end end
+function onQueryChange(value) if mode=="list" and not busy then query=type(value)=="string" and value or ""; restoreEntryID,restoreFieldID,restoreCard=nil,nil,false; applyFilter(); renderList() elseif mode=="list" then query=type(value)=="string" and value or "" end end
 function onQuerySubmit() if mode=="list" then openCard() else copyField() end end
 function onKey(chord,pressed)
   if not pressed then return end; local key=tostring(chord):lower()

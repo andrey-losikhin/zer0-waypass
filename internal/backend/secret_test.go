@@ -5,19 +5,94 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
+// routedRunner answers listing and store-root queries separately.
+type routedRunner struct {
+	listing string
+	root    string
+	calls   []runnerCall
+}
+
+func (r *routedRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, runnerCall{name: name, args: append([]string(nil), args...)})
+	switch strings.Join(args, " ") {
+	case "ls --flat":
+		return []byte(r.listing), nil
+	case "config mounts.path":
+		return []byte(r.root + "\n"), nil
+	}
+	return nil, ErrBackend
+}
+
 func TestPrepareSecretUsesFreshExactListing(t *testing.T) {
-	runner := &fakeRunner{output: []byte("synthetic/account\nsynthetic/other\n")}
+	runner := &routedRunner{listing: "synthetic/account\nsynthetic/other\n", root: sidecarStore(t)}
 	store := &Gopass{runner: runner}
 
-	if _, err := store.PrepareSecret(context.Background(), SecretPassword, "synthetic/account"); err != nil {
+	request, err := store.PrepareSecret(context.Background(), SecretPassword, "synthetic/account")
+	if err != nil {
 		t.Fatalf("PrepareSecret: %v", err)
 	}
-	wantCalls := []runnerCall{{name: "gopass", args: []string{"ls", "--flat"}}}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("calls = %#v, want %#v", runner.calls, wantCalls)
+	if request.action != SecretPassword || request.entryPath != "synthetic/account" {
+		t.Fatalf("request = %#v", request)
+	}
+	if !reflect.DeepEqual(runner.calls[0], runnerCall{name: "gopass", args: []string{"ls", "--flat"}}) {
+		t.Fatalf("first call = %#v", runner.calls[0])
+	}
+	for _, call := range runner.calls {
+		if call.args[0] == "show" || call.args[0] == "otp" {
+			t.Fatalf("legacy prepare decrypted: %#v", call)
+		}
+	}
+}
+
+func TestPrepareSecretResolvesBundleFieldsByKind(t *testing.T) {
+	r := &fieldRunner{root: workDBStore(t)}
+	g := &Gopass{runner: r}
+	bundle := ReservedFieldPrefix + "v1/" + testOID(1) + "/" + testOID(2) + "/"
+	password, err := g.PrepareSecret(context.Background(), SecretPassword, "work/db")
+	if err != nil || password.action != SecretField || password.entryPath != bundle+testOID(3) {
+		t.Fatalf("password %#v %v", password, err)
+	}
+	if _, err := g.PrepareSecret(context.Background(), SecretUsername, "work/db"); err != ErrEntryNotFound {
+		t.Fatalf("missing username kind err=%v", err)
+	}
+}
+
+func TestStartSecretArgvForTOTPAndLegacyField(t *testing.T) {
+	writer, err := createDiscardPipeWriter(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	store := NewGopass()
+	if _, err := store.StartSecret(context.Background(), SecretRequest{action: SecretLegacyField, entryPath: "synthetic/account"}, writer); err != ErrInvalidSecretAction {
+		t.Fatalf("legacy field without key err=%v", err)
+	}
+	if _, err := store.StartSecret(context.Background(), SecretRequest{action: SecretLegacyField, entryPath: ReservedFieldPrefix + "x", key: "host"}, writer); err != ErrInvalidSecretAction {
+		t.Fatalf("legacy field on sidecar err=%v", err)
+	}
+}
+
+func TestPrepareLegacyFieldMapsIDToKeyName(t *testing.T) {
+	r := &legacyFieldRunner{root: sidecarStore(t)}
+	g := &Gopass{runner: r}
+	set, err := g.Fields(context.Background(), "legacy/account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := g.PrepareLegacyField(context.Background(), "legacy/account", set.Fields[4].ID)
+	if err != nil || request.action != SecretLegacyField || request.key != "Project" {
+		t.Fatalf("request %#v %v", request, err)
+	}
+	request, err = g.PrepareLegacyField(context.Background(), "legacy/account", "legacy-password")
+	if err != nil || request.action != SecretPassword || request.key != "" {
+		t.Fatalf("password request %#v %v", request, err)
+	}
+	if _, err := g.PrepareLegacyField(context.Background(), "legacy/account", "legacy-unknown"); err != ErrEntryNotFound {
+		t.Fatalf("unknown id err=%v", err)
 	}
 }
 

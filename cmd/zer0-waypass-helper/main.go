@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -44,6 +45,7 @@ type copyAction uint8
 const (
 	copyUsername copyAction = iota + 1
 	copyPassword
+	copyTOTP
 )
 
 type copyRequest struct {
@@ -56,6 +58,26 @@ var copyDispatcher = func(ctx context.Context, action backend.SecretAction, entr
 	return clipboard.CopyGuarded(ctx, action, entryPath, policy)
 }
 var fieldCopyDispatcher = clipboard.CopyFieldGuarded
+var legacyFieldCopyDispatcher = clipboard.CopyLegacyFieldGuarded
+
+// notifier reports only a fixed, secret-free failure text. It is best-effort:
+// a missing notify-send must not change the copy result.
+var notifier = func(code protocol.ErrorCode) {
+	body := "Copy failed"
+	switch code {
+	case protocol.ErrorBackendTimeout:
+		body = "Copy timed out waiting for gopass or pinentry"
+	case protocol.ErrorOperationCanceled:
+		body = "Copy canceled"
+	case protocol.ErrorBackendInvalidData:
+		body = "The entry or field no longer exists"
+	case protocol.ErrorBackendUnavailable:
+		body = "gopass or wl-copy is unavailable"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "notify-send", "--app-name=zer0-waypass", "--", "zer0-waypass", body).Run()
+}
 
 // parseCopyRequest validates the complete copy CLI grammar without retaining
 // the untrusted transport ID.
@@ -70,6 +92,8 @@ func parseCopyRequest(args []string) (copyRequest, bool) {
 		action = copyUsername
 	case "password":
 		action = copyPassword
+	case "totp":
+		action = copyTOTP
 	default:
 		return copyRequest{}, false
 	}
@@ -183,38 +207,73 @@ func run(ctx context.Context, args []string, store metadataBackend, stdout, stde
 		}
 		return 0
 	case "copy":
-		if len(args) == 7 && args[1] == "field" && args[5] == "--ttl" {
-			entryPath, err := protocol.DecodeEntryID(protocol.EntryID(args[2]))
-			if err != nil {
-				return invocationError(stderr)
-			}
-			ttl, err := clipboard.ParseOwnershipBudgetSeconds(args[6])
-			if err != nil {
-				return invocationError(stderr)
-			}
-			if !validRawURLToken(args[3], 32) || !validRawURLToken(args[4], 16) {
-				return invocationError(stderr)
-			}
-			policy := clipboard.DefaultPolicy()
-			policy.OwnershipBudget = ttl
-			if err := fieldCopyDispatcher(ctx, entryPath, args[3], args[4], policy); err != nil {
-				return operationError(stderr, copyErrorCode(err))
-			}
-			return 0
+		notify := len(args) > 0 && args[len(args)-1] == "--notify"
+		if notify {
+			args = args[:len(args)-1]
 		}
-		request, ok := parseCopyRequest(args)
-		if !ok {
-			return invocationError(stderr)
+		code, failure := runCopy(ctx, args, stderr)
+		if notify && code == 1 {
+			notifier(failure)
 		}
-		policy := clipboard.DefaultPolicy()
-		policy.OwnershipBudget = request.ttl
-		if err := copyDispatcher(ctx, backendAction(request.action), request.entryPath, policy); err != nil {
-			return operationError(stderr, copyErrorCode(err))
-		}
-		return 0
+		return code
 	default:
 		return invocationError(stderr)
 	}
+}
+
+func runCopy(ctx context.Context, args []string, stderr io.Writer) (int, protocol.ErrorCode) {
+	fail := func(code protocol.ErrorCode) (int, protocol.ErrorCode) {
+		return operationError(stderr, code), code
+	}
+	switch {
+	case len(args) == 6 && args[1] == "legacy-field" && args[4] == "--ttl":
+		entryPath, err := protocol.DecodeEntryID(protocol.EntryID(args[2]))
+		if err != nil {
+			return invocationError(stderr), protocol.ErrorInvalidInvocation
+		}
+		ttl, err := clipboard.ParseOwnershipBudgetSeconds(args[5])
+		if err != nil {
+			return invocationError(stderr), protocol.ErrorInvalidInvocation
+		}
+		fieldID, ok := strings.CutPrefix(args[3], "legacy-")
+		if !ok || (fieldID != "password" && !validRawURLToken(fieldID, 16)) {
+			return invocationError(stderr), protocol.ErrorInvalidInvocation
+		}
+		policy := clipboard.DefaultPolicy()
+		policy.OwnershipBudget = ttl
+		if err := legacyFieldCopyDispatcher(ctx, entryPath, args[3], policy); err != nil {
+			return fail(copyErrorCode(err))
+		}
+		return 0, ""
+	case len(args) == 7 && args[1] == "field" && args[5] == "--ttl":
+		entryPath, err := protocol.DecodeEntryID(protocol.EntryID(args[2]))
+		if err != nil {
+			return invocationError(stderr), protocol.ErrorInvalidInvocation
+		}
+		ttl, err := clipboard.ParseOwnershipBudgetSeconds(args[6])
+		if err != nil {
+			return invocationError(stderr), protocol.ErrorInvalidInvocation
+		}
+		if !validRawURLToken(args[3], 32) || !validRawURLToken(args[4], 16) {
+			return invocationError(stderr), protocol.ErrorInvalidInvocation
+		}
+		policy := clipboard.DefaultPolicy()
+		policy.OwnershipBudget = ttl
+		if err := fieldCopyDispatcher(ctx, entryPath, args[3], args[4], policy); err != nil {
+			return fail(copyErrorCode(err))
+		}
+		return 0, ""
+	}
+	request, ok := parseCopyRequest(args)
+	if !ok {
+		return invocationError(stderr), protocol.ErrorInvalidInvocation
+	}
+	policy := clipboard.DefaultPolicy()
+	policy.OwnershipBudget = request.ttl
+	if err := copyDispatcher(ctx, backendAction(request.action), request.entryPath, policy); err != nil {
+		return fail(copyErrorCode(err))
+	}
+	return 0, ""
 }
 
 func validRawURLToken(value string, size int) bool {
@@ -223,8 +282,11 @@ func validRawURLToken(value string, size int) bool {
 }
 
 func backendAction(action copyAction) backend.SecretAction {
-	if action == copyUsername {
+	switch action {
+	case copyUsername:
 		return backend.SecretUsername
+	case copyTOTP:
+		return backend.SecretTOTP
 	}
 	return backend.SecretPassword
 }

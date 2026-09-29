@@ -345,6 +345,8 @@ func TestProductionPersistenceAndExecTripwire(t *testing.T) {
 		filepath.Join("internal", "backend", "secret.go"):      1,
 		filepath.Join("internal", "clipboard", "clipboard.go"): 1,
 		filepath.Join("internal", "clipboard", "guardian.go"):  1,
+		// Fixed notify-send argv with a secret-free body chosen by error code.
+		filepath.Join("cmd", "zer0-waypass-helper", "main.go"): 1,
 	}
 	allowedNewFileFiles := map[string]int{
 		filepath.Join("internal", "clipboard", "guardian.go"): 2,
@@ -703,6 +705,57 @@ func TestUnlockDecryptsWithoutOutput(t *testing.T) {
 func TestUnlockTimeoutFitsNoctaliaCallbackCap(t *testing.T) {
 	if unlockOperationTimeout >= 60*time.Second {
 		t.Fatalf("unlockOperationTimeout = %v, must stay below 60s", unlockOperationTimeout)
+	}
+}
+
+func TestCopyTOTPAndNotifyGrammar(t *testing.T) {
+	entryID, _ := protocol.EncodeCanonicalPath("work/db")
+	oldCopy, oldNotify := copyDispatcher, notifier
+	defer func() { copyDispatcher, notifier = oldCopy, oldNotify }()
+	var gotAction backend.SecretAction
+	copyDispatcher = func(_ context.Context, action backend.SecretAction, _ string, _ clipboard.Policy) error {
+		gotAction = action
+		return backend.ErrTimeout
+	}
+	var notified []protocol.ErrorCode
+	notifier = func(code protocol.ErrorCode) { notified = append(notified, code) }
+
+	code, _, stderr := runForTest(t, []string{"copy", "totp", string(entryID), "--ttl", "30", "--notify"}, &fakeBackend{})
+	if code != 1 || gotAction != backend.SecretTOTP || stderr != errorLine(protocol.ErrorBackendTimeout) {
+		t.Fatalf("totp copy %d %v %q", code, gotAction, stderr)
+	}
+	if len(notified) != 1 || notified[0] != protocol.ErrorBackendTimeout {
+		t.Fatalf("notified %v", notified)
+	}
+	if code, _, _ := runForTest(t, []string{"copy", "totp", string(entryID), "--ttl", "30"}, &fakeBackend{}); code != 1 || len(notified) != 1 {
+		t.Fatal("notification sent without --notify")
+	}
+	if code, _, _ := runForTest(t, []string{"copy", "totp", string(entryID), "--ttl", "30", "--notify", "--notify"}, &fakeBackend{}); code != 2 {
+		t.Fatal("duplicate --notify accepted")
+	}
+}
+
+func TestCopyLegacyFieldValidatesID(t *testing.T) {
+	entryID, _ := protocol.EncodeCanonicalPath("legacy/account")
+	old := legacyFieldCopyDispatcher
+	defer func() { legacyFieldCopyDispatcher = old }()
+	var got string
+	legacyFieldCopyDispatcher = func(_ context.Context, entry, fieldID string, _ clipboard.Policy) error {
+		if entry != "legacy/account" {
+			t.Fatal("wrong entry")
+		}
+		got = fieldID
+		return nil
+	}
+	id := "legacy-" + tokenForTest(16, 5)
+	if code, _, _ := runForTest(t, []string{"copy", "legacy-field", string(entryID), id, "--ttl", "30"}, &fakeBackend{}); code != 0 || got != id {
+		t.Fatalf("legacy field copy %d %q", code, got)
+	}
+	for _, bad := range []string{"legacy-", "legacy-../x", tokenForTest(16, 5), "legacy-" + tokenForTest(8, 1)} {
+		got = ""
+		if code, _, _ := runForTest(t, []string{"copy", "legacy-field", string(entryID), bad, "--ttl", "30"}, &fakeBackend{}); code != 2 || got != "" {
+			t.Fatalf("bad legacy id %q accepted", bad)
+		}
 	}
 }
 

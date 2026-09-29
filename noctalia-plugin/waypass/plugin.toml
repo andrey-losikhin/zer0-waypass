@@ -6,14 +6,14 @@ author = "zer0"
 license = "Apache-2.0"
 dependencies = ["zer0-waypass-helper"]
 tags = ["launcher", "privacy", "productivity", "utility"]
-icon = "key-round"
+icon = "key"
 description = "Search gopass entries and copy selected fields through the system clipboard."
 
 [[launcher_provider]]
 id = "finder"
 entry = "launcher.luau"
 prefix = "wp"
-glyph = "key-round"
+glyph = "key"
 include_in_global_search = false
 debounce_ms = 200
 
@@ -27,3 +27,26 @@ position = "center"
 dismiss_on_outside_click = true
 keyboard_focus = "exclusive"
 capture_keys = ["Up", "Down", "Return", "Enter", "Escape", "Backspace", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+[[setting]]
+key = "clipboard_ttl"
+type = "int"
+label_key = "settings.clipboard_ttl.label"
+description_key = "settings.clipboard_ttl.description"
+default = 30
+min = 5
+max = 120
+
+[[setting]]
+key = "notify_on_error"
+type = "bool"
+label_key = "settings.notify_on_error.label"
+description_key = "settings.notify_on_error.description"
+default = true
+
+[[setting]]
+key = "recent_first"
+type = "bool"
+label_key = "settings.recent_first.label"
+description_key = "settings.recent_first.description"
+default = true
