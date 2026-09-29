@@ -16,8 +16,8 @@ local PANEL_ID = "zer0/waypass:waypass"
 local locked, pendingUnlockID, allowPromptID, panelOpen = false, nil, nil, false
 
 local tr = noctalia.tr
--- Recent entries hold only opaque entry IDs, never labels or values.
-local RECENT_KEY, RECENT_MAX = "recent_entry_ids", 10
+local usageStats = require("./shared.luau")
+local usage = {}
 
 local function ttlArg()
   local ttl = tonumber(noctalia.getConfig("clipboard_ttl")) or 30
@@ -29,18 +29,9 @@ local function copyArgv(...)
   if noctalia.getConfig("notify_on_error") ~= false then table.insert(argv, "--notify") end
   return argv
 end
-local function recentIDs()
-  local ids = noctalia.state.get(RECENT_KEY)
-  if type(ids) ~= "table" then return {} end
-  local result = {}
-  for _, id in ipairs(ids) do if type(id) == "string" and #result < RECENT_MAX then table.insert(result, id) end end
-  return result
-end
-local function rememberRecent(id)
-  if noctalia.getConfig("recent_first") == false then noctalia.state.set(RECENT_KEY, {}); return end
-  local ids = { id }
-  for _, old in ipairs(recentIDs()) do if old ~= id and #ids < RECENT_MAX then table.insert(ids, old) end end
-  noctalia.state.set(RECENT_KEY, ids)
+local function recordUsage(id, weight)
+  local updated = usageStats.record(id, weight)
+  if updated ~= nil then usage = updated end
 end
 
 local function selected(list, index) if index < 1 or index > #list then return nil end; return list[index] end
@@ -57,7 +48,8 @@ end
 local function moreRow(key, text, onClick)
   return ui.row({key=key,paddingH=12,onClick=onClick},{ui.label({text=text,color="primary"})})
 end
-local renderList, renderCard, openCard, back, copyField
+local renderList, renderCard, openCard, back, copyField, applyFilter
+local function resetUsage() usageStats.reset(); usage = {}; applyFilter(); renderList() end
 
 renderList = function()
   local rows = {}
@@ -70,13 +62,13 @@ renderList = function()
     table.insert(rows, ui.row({ key="entry-"..item.id, gap=10, paddingV=9, paddingH=12, radius=10, fill=active and "primary/0.12" or "surface", border=active and "primary" or "surface", borderWidth=1, onClick=function() selectedIndex=index; renderList() end }, {
       ui.glyph({ name=active and "chevron-right" or "key", size=16, color=active and "primary" or "on_surface_variant" }),
       ui.label({ text=item.label, color=active and "primary" or "on_surface", flexGrow=1, maxLines=1 }),
-      item.recent and ui.label({ text=tr("list.recent"), color="on_surface_variant" }) or nil,
+      item.frequent and ui.label({ text=tr("list.frequent"), color="on_surface_variant" }) or nil,
     }))
   end
   if last < #items then table.insert(rows, moreRow("more-down", tr("list.more_down",{count=#items-last}), function() selectedIndex=math.min(#items,last+1); renderList() end)) end
   if #rows == 0 then table.insert(rows, ui.label({ text=busy and tr("list.searching") or (message~="" and message or tr("list.empty")), color="on_surface_variant" })) end
   panel.render(ui.column({ flexGrow=1, gap=12, align="stretch" }, {
-    ui.row({ gap=10, align="center" }, { ui.glyph({name="search",size=18}), ui.input({key="waypass-query",value=query,placeholder=tr("list.placeholder"),flexGrow=1,focus=true,onChange="onQueryChange",onSubmit="onQuerySubmit"}) }),
+    ui.row({ gap=10, align="center" }, { ui.glyph({name="search",size=18}), ui.input({key="waypass-query",value=query,placeholder=tr("list.placeholder"),flexGrow=1,focus=true,onChange="onQueryChange",onSubmit="onQuerySubmit"}), ui.button({glyph="history-off",variant="ghost",tooltip=tr("list.reset_usage"),onClick=resetUsage}) }),
     ui.label({text=tr("list.hint"),color="on_surface_variant"}), ui.column({flexGrow=1,gap=4,align="stretch"},rows),
   }))
 end
@@ -110,22 +102,29 @@ renderCard = function()
 end
 
 -- Fuzzy-filters the entry list loaded on open; typing never spawns the helper.
-local function applyFilter()
+-- Empty query: usage weight, then helper order. Query: exact matches first,
+-- then fuzzy score plus a log-scaled usage bonus.
+applyFilter = function()
   items = {}
   local text = noctalia.string.trim(query)
-  if text == "" then
-    local rank = {}
-    if noctalia.getConfig("recent_first") ~= false then for index, id in ipairs(recentIDs()) do rank[id] = index end end
-    for _, item in ipairs(allItems) do if rank[item.id] ~= nil then table.insert(items, { id=item.id, label=item.label, recent=true, score=-rank[item.id] }) end end
-    table.sort(items, function(a, b) return a.score > b.score end)
-    for _, item in ipairs(allItems) do if rank[item.id] == nil then table.insert(items, { id=item.id, label=item.label }) end end
-  else
-    for order, item in ipairs(allItems) do
+  local now = noctalia.nowMs()
+  for order, item in ipairs(allItems) do
+    local weight = usageStats.weight(usage[item.id], now)
+    if text == "" then
+      table.insert(items, { id=item.id, label=item.label, frequent=weight>=usageStats.FREQUENT_MIN, exact=false, score=weight, order=order })
+    else
       local score = noctalia.fuzzyScore(text, item.label)
-      if score ~= nil then table.insert(items, { id=item.id, label=item.label, score=score, order=order }) end
+      if score ~= nil then
+        local exact = score >= usageStats.EXACT_SCORE
+        table.insert(items, { id=item.id, label=item.label, exact=exact, score=exact and score or score+usageStats.queryBonus(weight), order=order })
+      end
     end
-    table.sort(items, function(a, b) if a.score ~= b.score then return a.score > b.score end; return a.order < b.order end)
   end
+  table.sort(items, function(a, b)
+    if a.exact ~= b.exact then return a.exact end
+    if a.score ~= b.score then return a.score > b.score end
+    return a.order < b.order
+  end)
   selectedIndex, listTop = #items > 0 and 1 or 0, 1
 end
 
@@ -134,18 +133,23 @@ local function search()
   busy,allItems,items,selectedIndex,message=true,{},{},0,""; renderList()
   noctalia.runAsync({HELPER,"list"},function(result)
     if mode~="list" or current~=generation then return end
-    busy,allItems=false,{}
-    if type(result)=="table" and result.exitCode==0 then local d=noctalia.json.decode(result.stdout or ""); if type(d)=="table" and type(d.items)=="table" then for _,v in ipairs(d.items) do if type(v)=="table" and type(v.id)=="string" and type(v.label)=="string" then table.insert(allItems,{id=v.id,label=v.label}) end end end else message=tr("list.error") end
+    busy,allItems,usage=false,{},{}
+    if type(result)=="table" and result.exitCode==0 then local d=noctalia.json.decode(result.stdout or ""); if type(d)=="table" and type(d.items)=="table" then
+      local valid={}
+      for _,v in ipairs(d.items) do if type(v)=="table" and type(v.id)=="string" and type(v.label)=="string" then table.insert(allItems,{id=v.id,label=v.label}); valid[v.id]=true end end
+      usage=usageStats.load(valid)
+    end else message=tr("list.error") end
     applyFilter()
     if restoreEntryID~=nil then for index,v in ipairs(items) do if v.id==restoreEntryID then selectedIndex=index; break end end end
     local shouldRestore=restoreCard and selected(items,selectedIndex)~=nil and selected(items,selectedIndex).id==restoreEntryID
     restoreEntryID=nil; restoreCard=false
-    renderList(); if shouldRestore then openCard() end
+    renderList(); if shouldRestore then openCard(false) end
   end)
 end
 
-openCard = function()
+openCard = function(userAction)
   local item=selected(items,selectedIndex); if busy or item==nil then return end
+  if userAction~=false then recordUsage(item.id,usageStats.WEIGHT_OPEN) end
   generation+=1; local current=generation
   mode,busy,fields,fieldIndex,revision,cardEntryID,cardLabel,message,locked="card",true,{},0,nil,item.id,item.label,"",false; renderCard()
   local argv={HELPER,"fields",item.id}
@@ -184,7 +188,7 @@ copyField = function()
   elseif field.legacy then argv=copyArgv("legacy-field",cardEntryID,field.id)
   elseif revision~=nil then argv=copyArgv("field",cardEntryID,revision,field.id)
   else return end
-  rememberRecent(cardEntryID)
+  recordUsage(cardEntryID,(field.totp or field.kind=="password") and usageStats.WEIGHT_PRIMARY or usageStats.WEIGHT_FIELD)
   -- Do not start gopass until onClose: a layer-shell surface is always drawn
   -- above regular pinentry windows, even when pinentry owns keyboard focus.
   pendingCopyArgv=argv

@@ -45,8 +45,21 @@ description_key = "settings.notify_on_error.description"
 default = true
 
 [[setting]]
-key = "recent_first"
+key = "smart_sort"
 type = "bool"
-label_key = "settings.recent_first.label"
-description_key = "settings.recent_first.description"
+label_key = "settings.smart_sort.label"
+description_key = "settings.smart_sort.description"
 default = true
+
+[[setting]]
+key = "usage_half_life_days"
+type = "select"
+label_key = "settings.usage_half_life_days.label"
+description_key = "settings.usage_half_life_days.description"
+default = "14"
+options = [
+  { value = "7", label_key = "settings.usage_half_life_days.options.7" },
+  { value = "14", label_key = "settings.usage_half_life_days.options.14" },
+  { value = "30", label_key = "settings.usage_half_life_days.options.30" },
+]
+visible_when = { key = "smart_sort", values = ["true"] }

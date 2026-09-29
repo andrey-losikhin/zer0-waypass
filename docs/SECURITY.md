@@ -40,6 +40,10 @@ index, settings, state, or cache. Each `list` and `status` operation obtains a
 fresh live listing. Filtering applies only to the listed path/label. `status`
 probes the listing capability but returns no entry paths.
 
+Exception (ADR 0005): the Noctalia plugin, not the helper, keeps `usage.json`
+in its plugin data directory with only entry IDs, usage scores and last-use
+times, which discloses how often entries are used.
+
 Entry IDs are reversible transport encodings, not secrets, capabilities, or
 authorization. Both encoding of backend paths and decoding of untrusted IDs
 enforce a non-empty valid-UTF-8 canonical relative slash path of at most 4096
