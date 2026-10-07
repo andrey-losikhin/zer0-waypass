@@ -126,7 +126,7 @@ func copyPreparedWithPolicy(ctx context.Context, source secretSource, prepare fu
 	// --trim-newline drops the terminator gopass stores after every value, so a
 	// paste into a terminal or form never submits it; the secret stays FD-to-FD.
 	owner := exec.CommandContext(operationContext, wlCopyExecutable,
-		"--sensitive", "--foreground", "--trim-newline", "--type", "text/plain;charset=utf-8")
+		"--sensitive", "--foreground", "--trim-newline", "--type", "text/plain")
 	owner.Stdin = pipeReader
 	owner.WaitDelay = processWaitDelay
 	owner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

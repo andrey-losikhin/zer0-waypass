@@ -1,7 +1,7 @@
 {
   "list": {
     "placeholder": "Search password entries",
-    "hint": "Enter: open card",
+    "hint": "Enter / →: open entry and choose a field",
     "searching": "Searching…",
     "empty": "No entries found",
     "error": "Unable to read password entries",

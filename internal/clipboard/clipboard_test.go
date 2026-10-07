@@ -62,7 +62,7 @@ func TestCopyStreamsDirectlyWithExactArgvAndFreshMembership(t *testing.T) {
 			if len(calls) != 3 || !reflect.DeepEqual(calls[0], []string{"gopass", "ls", "--flat"}) {
 				t.Fatalf("argv calls = %#v, want fresh listing followed by exactly two workers", calls)
 			}
-			ownerCall := []string{"wl-copy", "--sensitive", "--foreground", "--trim-newline", "--type", "text/plain;charset=utf-8"}
+			ownerCall := []string{"wl-copy", "--sensitive", "--foreground", "--trim-newline", "--type", "text/plain"}
 			if !(reflect.DeepEqual(calls[1], ownerCall) && reflect.DeepEqual(calls[2], test.show)) &&
 				!(reflect.DeepEqual(calls[2], ownerCall) && reflect.DeepEqual(calls[1], test.show)) {
 				t.Fatalf("worker argv calls = %#v, want exact owner and show argv", calls[1:])
@@ -471,7 +471,7 @@ func TestCopyBackendStartFailureCancelsAndReapsStartedOwner(t *testing.T) {
 	calls := readArgvLog(t, logPath)
 	wantCalls := [][]string{
 		{"gopass", "ls", "--flat"},
-		{"wl-copy", "--sensitive", "--foreground", "--trim-newline", "--type", "text/plain;charset=utf-8"},
+		{"wl-copy", "--sensitive", "--foreground", "--trim-newline", "--type", "text/plain"},
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want listing and owner only (no decrypt)", calls)

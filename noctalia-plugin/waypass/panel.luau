@@ -233,6 +233,7 @@ function onKey(chord,pressed)
     else local n=tonumber(key); if n~=nil and n>=1 and n<=9 and n<=#fields then fieldIndex=n; copyField() end end
   else
     if key=="escape" then panel.close()
+    elseif key=="right" and #items>0 then openCard()
     elseif key=="down" and #items>0 then selectedIndex=selectedIndex%#items+1; renderList()
     elseif key=="up" and #items>0 then selectedIndex=(selectedIndex-2)%#items+1; renderList()
     elseif key=="return" or key=="enter" then openCard() end
